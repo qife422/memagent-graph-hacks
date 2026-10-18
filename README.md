@@ -2,7 +2,7 @@
 
 > **Graph Hacks (WeMakeDevs × FalkorDB) · Track 02: Agent Memory & Coordination**
 >
-> 🎥 Demo video: [TODO — 1–2 min screen recording]
+> 🎥 Demo video: https://youtu.be/5b57-C2ra_M
 > 🚀 Live demo: http://129.146.75.2:8000 (runs on Oracle Cloud Always Free ARM)
 > 📝 Blog post: [TODO — optional, for the Best Blog prize]
 
