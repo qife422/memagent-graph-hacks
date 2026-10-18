@@ -1,0 +1,809 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MemAgent — graph memory you can see (Graph Hacks · Track 02)</title>
+<script src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
+<style>
+  :root {
+    --bg: #0b0f1a; --panel: #121828; --panel2: #1a2238;
+    --border: #26304d; --border2: #35406a;
+    --text: #eef1f8; --muted: #9aa5c4; --dim: #5f6b8f;
+    --accent: #4f7cff; --accent2: #7ee2a8; --warn: #ffb37e;
+    --user-dot: #4f7cff; --item-dot: #7ee2a8;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; overflow: hidden; }
+  body { position: fixed; inset: 0; width: 100%;
+         display: flex; flex-direction: column;
+         font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text",
+                      "Helvetica Neue", Arial, sans-serif;
+         margin: 0; background: radial-gradient(1200px 600px at 70% -10%, #16203a 0%, var(--bg) 55%) fixed, var(--bg);
+         color: var(--text); -webkit-font-smoothing: antialiased; }
+
+  /* ---------- header ---------- */
+  header { padding: 10px 20px; background: rgba(18,24,40,.85); backdrop-filter: blur(12px);
+           border-bottom: 1px solid var(--border); flex-shrink: 0;
+           display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+  header h1 { font-size: 17px; margin: 0; font-weight: 700; letter-spacing: -.2px; }
+  header h1 .grad { background: linear-gradient(90deg, var(--accent2), var(--accent));
+                    -webkit-background-clip: text; background-clip: text; color: transparent; }
+  .pill { background: var(--panel2); border: 1px solid var(--border2); border-radius: 999px;
+          padding: 4px 12px; font-size: 12px; color: var(--muted); }
+  .pill b { color: #fff; font-weight: 600; }
+  .pill.track { border-color: #2c4a38; color: var(--accent2); }
+  button { background: var(--accent); color: #fff; border: 0; border-radius: 10px;
+           padding: 8px 14px; font-size: 13px; font-weight: 600; cursor: pointer;
+           transition: transform .08s, filter .15s; }
+  button:hover { filter: brightness(1.12); }
+  button:active { transform: scale(.97); }
+  button.ghost { background: var(--panel2); border: 1px solid var(--border2); color: var(--text); }
+  button:disabled { opacity: .5; cursor: default; }
+
+  main { display: flex; flex: 1; min-height: 0; }
+
+  /* ---------- chat ---------- */
+  #chat-pane { width: 42%; min-width: 360px; max-width: 560px; display: flex; flex-direction: column;
+               border-right: 1px solid var(--border); background: rgba(11,15,26,.6); }
+  #tabs { display: flex; gap: 8px; padding: 14px 16px 0; }
+  #tabs button { flex: 1; padding: 10px; font-size: 13px; }
+  #tabs button:not(.active) { background: var(--panel2); border: 1px solid var(--border2); color: var(--muted); }
+  #tabs button small { display: block; font-size: 10px; font-weight: 400; opacity: .7; margin-top: 2px; }
+  #messages { flex: 1; overflow-y: auto; padding: 18px 16px; display: flex;
+              flex-direction: column; gap: 14px; scroll-behavior: smooth; }
+  .msg { max-width: 94%; animation: msgIn .28s cubic-bezier(.2,.9,.3,1.2); }
+  @keyframes msgIn { from { opacity: 0; transform: translateY(10px) scale(.98); } }
+  .msg.user { align-self: flex-end; background: linear-gradient(135deg, #3b6cf0, #2f5be0);
+              border-radius: 16px 16px 4px 16px; padding: 10px 15px;
+              box-shadow: 0 4px 18px rgba(79,124,255,.25); }
+  .msg.agent { align-self: flex-start; background: var(--panel2); border: 1px solid var(--border);
+               border-radius: 16px 16px 16px 4px; padding: 11px 15px; }
+  .msg .who { font-size: 11px; color: var(--muted); margin-bottom: 5px; font-weight: 600;
+              text-transform: uppercase; letter-spacing: .6px; }
+  .msg .body { font-size: 14px; line-height: 1.55; }
+  .msg .trace { margin-top: 9px; font-size: 11px; color: var(--muted);
+                background: #0d1322; border: 1px solid var(--border); border-radius: 8px;
+                padding: 7px 10px; font-family: ui-monospace, SFMono-Regular, monospace;
+                white-space: pre-wrap; line-height: 1.5; }
+  .msg .trace:empty { display: none; }
+  .msg .trace .t-remember { color: var(--accent2); }
+  .msg .trace .t-recall { color: var(--accent); }
+  .typing { display: inline-flex; gap: 5px; padding: 6px 2px; }
+  .typing span { width: 7px; height: 7px; border-radius: 50%; background: var(--muted);
+                 animation: blink 1.2s infinite; }
+  .typing span:nth-child(2) { animation-delay: .2s; }
+  .typing span:nth-child(3) { animation-delay: .4s; }
+  @keyframes blink { 0%, 60%, 100% { opacity: .25; } 30% { opacity: 1; } }
+
+  #input-row { display: flex; gap: 10px; padding: 14px 16px; border-top: 1px solid var(--border); }
+  #input-row input { flex: 1; background: var(--panel2); border: 1px solid var(--border2);
+                     border-radius: 12px; padding: 12px 15px; color: #fff; font-size: 14px;
+                     outline: none; transition: border-color .15s, box-shadow .15s; }
+  #input-row input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(79,124,255,.18); }
+  #input-row button { padding: 12px 20px; border-radius: 12px; }
+
+  /* ---------- graph ---------- */
+  #graph-pane { flex: 1; position: relative; display: flex; flex-direction: column; min-width: 0; }
+  #graph-toolbar { padding: 12px 18px; display: flex; gap: 10px; align-items: center;
+                   border-bottom: 1px solid var(--border); font-size: 13px; color: var(--muted);
+                   background: rgba(18,24,40,.5); }
+  #network { flex: 1; min-height: 0; width: 100%; overflow: hidden; position: relative; }
+  #network canvas { max-height: 100%; }
+  #explain-box { position: absolute; right: 18px; bottom: 18px; max-width: 360px;
+                 background: rgba(22,29,46,.96); border: 1px solid var(--border2);
+                 border-radius: 14px; padding: 14px 16px; font-size: 12.5px; display: none;
+                 box-shadow: 0 12px 40px rgba(0,0,0,.5); animation: msgIn .25s; z-index: 5; }
+  #explain-box h4 { margin: 0 0 8px; font-size: 13px; }
+  #explain-box code { font-size: 11px; color: var(--accent2); word-break: break-all;
+                      background: #0d1322; padding: 2px 6px; border-radius: 5px; }
+  #explain-box .x { position: absolute; top: 8px; right: 12px; cursor: pointer; color: var(--dim); }
+  .legend { display: flex; gap: 16px; font-size: 12px; color: var(--muted); align-items: center; }
+  .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 5px;
+         box-shadow: 0 0 8px currentColor; }
+  #warn { background: #4a2b1a; color: var(--warn); padding: 9px 20px; font-size: 13px; display: none;
+          border-bottom: 1px solid #6b3d24; }
+
+  /* ---------- timeline ---------- */
+  #timeline-toggle { position: absolute; left: 18px; bottom: 18px; z-index: 5; }
+  #timeline { position: absolute; left: 0; right: 0; bottom: 0; max-height: 38%;
+              background: rgba(14,19,33,.97); border-top: 1px solid var(--border2);
+              padding: 14px 20px; overflow-y: auto; display: none; z-index: 4;
+              box-shadow: 0 -12px 40px rgba(0,0,0,.45); }
+  #timeline.open { display: block; animation: slideUp .25s; }
+  @keyframes slideUp { from { transform: translateY(30px); opacity: 0; } }
+  #timeline h3 { margin: 0 0 10px; font-size: 13px; color: var(--muted);
+                 text-transform: uppercase; letter-spacing: .8px; }
+  .tl-item { display: flex; gap: 12px; padding: 9px 0; border-bottom: 1px solid var(--border);
+             font-size: 13px; align-items: baseline; }
+  .tl-item:last-child { border-bottom: 0; }
+  .tl-time { color: var(--dim); font-size: 11px; white-space: nowrap; min-width: 130px;
+             font-family: ui-monospace, monospace; }
+  .tl-rel { font-weight: 700; padding: 2px 8px; border-radius: 6px; font-size: 11px; }
+  .tl-rel.LIKES { background: rgba(126,226,168,.14); color: var(--accent2); }
+  .tl-rel.DISLIKES { background: rgba(255,120,120,.13); color: #ff9a9a; }
+  .tl-rel.PREFERS { background: rgba(79,124,255,.14); color: #9db8ff; }
+  .tl-item.inactive { opacity: .45; }
+  .tl-item.inactive .tl-rel { text-decoration: line-through; }
+
+  /* ---------- demo mode ---------- */
+  #demo-bar { position: absolute; top: 64px; left: 50%; transform: translateX(-50%);
+              background: rgba(22,29,46,.96); border: 1px solid var(--border2);
+              border-radius: 14px; padding: 12px 18px; display: none; z-index: 10;
+              box-shadow: 0 12px 40px rgba(0,0,0,.5); max-width: 520px; text-align: center; }
+  #demo-bar.show { display: block; animation: msgIn .3s; }
+  #demo-bar .step { font-size: 13px; color: var(--text); line-height: 1.5; }
+  #demo-bar .step b { color: var(--accent2); }
+  #demo-bar .controls { margin-top: 10px; display: flex; gap: 8px; justify-content: center; }
+  #demo-bar button { padding: 6px 14px; font-size: 12px; }
+  /* ---------- hero ---------- */
+  #hero { position: fixed; inset: 0; z-index: 100; display: flex;
+          align-items: center; justify-content: center; flex-direction: column;
+          background: radial-gradient(1000px 600px at 50% 30%, #1a2340 0%, #0b0f1a 60%);
+          transition: opacity .6s; overflow: hidden; }
+  #hero.hide { opacity: 0; pointer-events: none; }
+  /* subtle breathing glow behind the content */
+  #hero::before { content: ''; position: absolute; inset: 0; pointer-events: none;
+                  background: radial-gradient(620px 320px at 50% 38%, rgba(79,124,255,.14), transparent 70%);
+                  animation: heroGlow 3.2s ease-in-out infinite alternate; }
+  @keyframes heroGlow { from { opacity: .55; transform: scale(1); }
+                        to { opacity: 1; transform: scale(1.06); } }
+  #hero h1 { font-size: 42px; margin: 0 0 12px; font-weight: 800; letter-spacing: -1px;
+             color: #f2f5fc; position: relative;
+             animation: heroTitleIn .8s cubic-bezier(.2,.9,.3,1.08) backwards; }
+  #hero h1 .grad { background: linear-gradient(90deg, var(--accent2), var(--accent), var(--accent2));
+                   background-size: 200% auto;
+                   -webkit-background-clip: text; background-clip: text; color: transparent;
+                   animation: gradShift 4s linear infinite; }
+  @keyframes gradShift { to { background-position: 200% center; } }
+  @keyframes heroTitleIn { from { opacity: 0; transform: translateY(22px) scale(.96); } }
+  #hero p { color: var(--muted); font-size: 16px; max-width: 520px; text-align: center;
+            line-height: 1.6; margin: 0 0 8px; position: relative;
+            animation: heroFadeUp .7s .18s backwards; }
+  #hero .agents { display: flex; gap: 16px; margin: 20px 0; position: relative;
+                  animation: heroFadeUp .7s .34s backwards; }
+  @keyframes heroFadeUp { from { opacity: 0; transform: translateY(16px); } }
+  #hero .agent-card { background: var(--panel2); border: 1px solid var(--border2);
+                      border-radius: 14px; padding: 14px 22px; text-align: center;
+                      animation: msgIn .5s backwards; }
+  #hero .agent-card:nth-child(2) { animation-delay: .15s; }
+  #hero .agent-card:nth-child(3) { animation-delay: .3s; }
+  #hero .agent-card .icon { font-size: 28px; }
+  #hero .agent-card .name { font-weight: 700; margin-top: 6px; }
+  #hero .agent-card .desc { font-size: 12px; color: var(--muted); margin-top: 4px; }
+
+  /* ---------- user switcher ---------- */
+  #user-switch { display: flex; gap: 6px; align-items: center; }
+  #user-switch select { background: var(--panel2); border: 1px solid var(--border2);
+                        color: var(--text); border-radius: 8px; padding: 7px 10px;
+                        font-size: 13px; outline: none; cursor: pointer; }
+
+  /* ---------- time travel ---------- */
+  #timetravel { position: absolute; left: 18px; bottom: 18px; z-index: 5;
+                background: rgba(22,29,46,.96); border: 1px solid var(--border2);
+                border-radius: 12px; padding: 10px 14px; display: none; }
+  #timetravel.show { display: block; animation: msgIn .25s; }
+  #timetravel input[type=range] { width: 220px; accent-color: var(--accent); }
+  #timetravel .tt-label { font-size: 12px; color: var(--muted); margin-bottom: 6px; }
+  #timetravel .tt-label b { color: var(--text); }
+
+  /* ---------- handoff flash ---------- */
+  @keyframes handoffPulse {
+    0% { box-shadow: 0 0 0 0 rgba(126,226,168,.6); }
+    100% { box-shadow: 0 0 0 18px rgba(126,226,168,0); }
+  }
+  .handoff-flash { animation: handoffPulse .9s ease-out 3; border-radius: 12px; }
+
+  /* ---------- settings ---------- */
+  #settings-panel { position: absolute; top: 64px; right: 18px; z-index: 20;
+                    background: rgba(22,29,46,.97); border: 1px solid var(--border2);
+                    border-radius: 14px; padding: 16px 18px; width: 260px;
+                    display: none; box-shadow: 0 12px 40px rgba(0,0,0,.5); }
+  #settings-panel.show { display: block; animation: msgIn .25s; }
+  #settings-panel h3 { margin: 0 0 12px; font-size: 13px; color: var(--muted);
+                       text-transform: uppercase; letter-spacing: .8px; }
+  .set-row { display: flex; align-items: center; justify-content: space-between;
+             padding: 8px 0; font-size: 13px; border-bottom: 1px solid var(--border); }
+  .set-row:last-child { border-bottom: 0; }
+  .set-row select { background: var(--panel2); border: 1px solid var(--border2);
+                    color: var(--text); border-radius: 8px; padding: 6px 10px; font-size: 12px; }
+  .toggle { position: relative; width: 38px; height: 22px; background: var(--border2);
+            border-radius: 999px; cursor: pointer; transition: background .2s; }
+  .toggle.on { background: var(--accent); }
+  .toggle::after { content: ''; position: absolute; top: 3px; left: 3px; width: 16px; height: 16px;
+                   background: #fff; border-radius: 50%; transition: left .2s; }
+  .toggle.on::after { left: 19px; }
+
+  /* light theme */
+  body.light { --bg: #f4f6fb; --panel: #ffffff; --panel2: #eef1f8;
+               --border: #d8deea; --border2: #b9c2d8;
+               --text: #1a2238; --muted: #5a6584; --dim: #8b96b8; }
+  body.light { background: radial-gradient(1200px 600px at 70% -10%, #e8edf7 0%, var(--bg) 55%) fixed, var(--bg); }
+  body.light header { background: rgba(255,255,255,.85); }
+  body.light .msg.agent { background: #fff; }
+  body.light #input-row input { background: #fff; color: var(--text); }
+  body.light .msg .trace { background: #f0f3fa; color: var(--muted); }
+  body.light #settings-panel,
+  body.light #demo-bar,
+  body.light #timeline,
+  body.light #timetravel,
+  body.light #explain-box { background: rgba(255,255,255,.97); }
+
+  /* ---------- proactive toast ---------- */
+  #proactive-toast { position: fixed; bottom: 24px; right: 24px; z-index: 200;
+                     max-width: 340px; background: rgba(22,29,46,.97);
+                     border: 1px solid var(--accent); border-radius: 14px;
+                     padding: 14px 16px; box-shadow: 0 8px 32px rgba(79,124,255,.25);
+                     transform: translateY(150%); opacity: 0; pointer-events: none;
+                     transition: transform .45s cubic-bezier(.2,.9,.3,1.1), opacity .3s;
+                     cursor: pointer; }
+  #proactive-toast.show { transform: translateY(0); opacity: 1; pointer-events: auto; }
+  #proactive-toast .pt-head { font-size: 12px; color: var(--accent2); font-weight: 700;
+                              margin-bottom: 6px; letter-spacing: .4px; }
+  #proactive-toast .pt-body { font-size: 13.5px; line-height: 1.55; color: var(--text); }
+  body.light #proactive-toast { background: rgba(255,255,255,.98); }
+
+  /* fullscreen graph */
+  #graph-pane.fullscreen { position: fixed; inset: 0; z-index: 50; background: var(--bg); }
+  #graph-pane.fullscreen #chat-pane { display: none; }
+
+  ::-webkit-scrollbar { width: 8px; height: 8px; }
+  ::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 4px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+</style>
+</head>
+<body>
+<div id="hero">
+  <h1>MemAgent <span class="grad">· memory you can see</span></h1>
+  <p>Two AI agents share one <b style="color:var(--accent2)">FalkorDB knowledge graph</b> as their memory.
+     Nothing is ever deleted — beliefs are superseded, history preserved.</p>
+  <div class="agents">
+    <div class="agent-card"><div class="icon">🔭</div><div class="name">Scout</div><div class="desc">learns from chat</div></div>
+    <div class="agent-card"><div class="icon">🗄️</div><div class="name">FalkorDB</div><div class="desc">the shared memory</div></div>
+    <div class="agent-card"><div class="icon">🧭</div><div class="name">Advisor</div><div class="desc">answers from memory</div></div>
+  </div>
+  <p style="font-size:13px;color:var(--dim)">Track 02 · Agent Memory &amp; Coordination · Graph Hacks 2026</p>
+</div>
+<header>
+  <h1>MemAgent <span class="grad">· graph memory you can see</span></h1>
+  <span class="pill track">Track 02 · Agent Memory &amp; Coordination</span>
+  <span id="user-switch" class="pill">👤 <select id="user-select"></select></span>
+  <span class="pill">session <b id="session-id">{{ session }}</b></span>
+  <span style="flex:1"></span>
+  <button class="ghost" id="btn-demo" title="3-minute guided tour">▶ Demo</button>
+  <button class="ghost" id="btn-insight" title="Proactive taste insight">💡 Insights</button>
+  <button class="ghost" id="btn-timeline" title="Memory history">🕘 Timeline</button>
+  <button class="ghost" id="btn-timetravel" title="See the graph as it was">⏳ Time travel</button>
+  <button class="ghost" id="btn-fullscreen" title="Fullscreen graph">⛶</button>
+  <button class="ghost" id="btn-settings" title="Settings">⚙️</button>
+  <button class="ghost" id="btn-new-session" title="Fresh agents, same graph — memory must survive">↻ New session</button>
+  <button class="ghost" id="btn-reset" title="Wipe the FalkorDB graph">🗑 Reset</button>
+</header>
+<div id="warn">⚠ OPENAI_API_KEY not set — chat is disabled. Export it and restart web.py.</div>
+<main>
+  <section id="chat-pane">
+    <div id="tabs">
+      <button data-agent="advisor" class="active">Advisor<small>answers from memory</small></button>
+      <button data-agent="scout">Scout<small>learns new preferences</small></button>
+    </div>
+    <div id="messages"></div>
+    <div id="input-row">
+      <input id="input" placeholder="Talk to the agent…" autocomplete="off">
+      <button id="btn-send">Send</button>
+    </div>
+  </section>
+  <section id="graph-pane">
+    <div id="graph-toolbar">
+      <span class="legend">
+        <span><span class="dot" style="background:var(--user-dot);color:var(--user-dot)"></span>User</span>
+        <span><span class="dot" style="background:var(--item-dot);color:var(--item-dot)"></span>Item</span>
+        <span><span class="dot" style="background:#5a637e;color:#5a637e"></span>superseded</span>
+      </span>
+      <span style="flex:1"></span>
+      <span id="graph-count"></span>
+      <span style="color:var(--dim)">click a node to explain it</span>
+    </div>
+    <div id="network"></div>
+    <div id="explain-box">
+      <span class="x" onclick="this.parentElement.style.display='none'">✕</span>
+      <h4 id="explain-title"></h4><div id="explain-body"></div>
+    </div>
+    <div id="timeline"><h3>Memory timeline</h3><div id="timeline-items"></div></div>
+    <div id="timetravel">
+      <div class="tt-label">Graph as of <b id="tt-date">now</b></div>
+      <input type="range" id="tt-slider" min="0" max="100" value="100">
+      <div style="display:flex;gap:8px;margin-top:8px">
+        <button id="tt-now" style="padding:4px 12px;font-size:12px">Back to now</button>
+      </div>
+    </div>
+    <div id="demo-bar">
+      <div class="step" id="demo-text"></div>
+      <div class="controls">
+        <button id="demo-next">Next →</button>
+        <button class="ghost" id="demo-stop">Stop</button>
+      </div>
+    </div>
+    <div id="settings-panel">
+      <h3>Settings</h3>
+      <div class="set-row"><span>Theme</span>
+        <select id="set-theme">
+          <option value="dark">Dark</option>
+          <option value="light">Light</option>
+        </select>
+      </div>
+      <div class="set-row"><span>Graph physics</span><div class="toggle on" id="set-physics"></div></div>
+      <div class="set-row"><span>Edge labels</span><div class="toggle on" id="set-labels"></div></div>
+      <div class="set-row"><span>Proactive nudges</span><div class="toggle on" id="set-proactive"></div></div>
+      <div class="set-row"><span>Demo data</span>
+        <button id="set-seed" style="padding:5px 12px;font-size:12px">Load alice + bob</button>
+      </div>
+    </div>
+  </section>
+</main>
+<script>
+const LLM_OK = {{ 'true' if llm_ok else 'false' }};
+if (!LLM_OK) document.getElementById('warn').style.display = 'block';
+
+/* hero: auto-dismiss after 2.8s */
+setTimeout(() => document.getElementById('hero').classList.add('hide'), 2800);
+document.getElementById('hero').onclick = () =>
+  document.getElementById('hero').classList.add('hide');
+
+/* ---------------- user switcher ---------------- */
+let currentUser = '{{ user }}';
+async function loadUsers() {
+  const r = await fetch('/api/users');
+  const d = await r.json();
+  const sel = document.getElementById('user-select');
+  sel.innerHTML = '';
+  // include a couple of demo users so the switcher is meaningful
+  const all = [...new Set([...d.users, 'alice', 'bob'])];
+  all.forEach(u => {
+    const o = document.createElement('option');
+    o.value = u; o.textContent = u;
+    if (u === d.current) o.selected = true;
+    sel.appendChild(o);
+  });
+  currentUser = d.current;
+}
+document.getElementById('user-select').onchange = async (e) => {
+  const r = await fetch('/api/user', {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ name: e.target.value })
+  });
+  const d = await r.json();
+  currentUser = d.user;
+  document.getElementById('session-id').textContent = d.session;
+  messagesEl.innerHTML = '';
+  addMsg('advisor', `Switched to <b>${currentUser}</b> — separate memory, same graph engine.`);
+  drawGraph(d.graph, true);
+  renderTimeline();
+};
+loadUsers();
+
+let agent = 'advisor';
+document.querySelectorAll('#tabs button').forEach(b => {
+  b.onclick = () => {
+    document.querySelectorAll('#tabs button').forEach(x => x.classList.remove('active'));
+    b.classList.add('active');
+    agent = b.dataset.agent;
+  };
+});
+function setAgent(name) {
+  document.querySelectorAll('#tabs button').forEach(x =>
+    x.classList.toggle('active', x.dataset.agent === name));
+  agent = name;
+}
+
+/* ---------------- graph ---------------- */
+const container = document.getElementById('network');
+const nodes = new vis.DataSet([]);
+const edges = new vis.DataSet([]);
+function graphFontColors() {
+  const light = document.body.classList.contains('light');
+  return { node: light ? '#1a2238' : '#eef1f8',
+           edge: light ? '#5a6584' : '#9aa5c4' };
+}
+const network = new vis.Network(container, {nodes, edges}, {
+  nodes: { shape: 'dot', size: 24, font: { color: '#eef1f8', size: 14 },
+           borderWidth: 2, shadow: true },
+  edges: { font: { color: '#9aa5c4', size: 11, strokeWidth: 3, strokeColor: '#0b0f1a' },
+           arrows: { to: { enabled: true, scaleFactor: .8 } },
+           smooth: { type: 'curvedCW', roundness: .15 }, shadow: true },
+  physics: { stabilization: { iterations: 150 },
+             barnesHut: { gravitationalConstant: -4000, springLength: 140 } }
+});
+function applyGraphTheme() {
+  const c = graphFontColors();
+  network.setOptions({
+    nodes: { font: { color: c.node } },
+    edges: { font: { color: c.edge, strokeColor: document.body.classList.contains('light') ? '#ffffff' : '#0b0f1a' } }
+  });
+}
+const REL_COLOR = { LIKES: '#7ee2a8', DISLIKES: '#ff8a8a', PREFERS: '#7aa2ff' };
+const TYPE_ICON = { movie: '🎬', music: '🎵', food: '🥗', book: '📚', sport: '⚽',
+                    game: '🎮', place: '📍', hobby: '🎨' };
+function iconFor(itemType, label) {
+  const t = (itemType || '').toLowerCase();
+  if (TYPE_ICON[t]) return TYPE_ICON[t] + ' ';
+  const l = (label || '').toLowerCase();
+  if (/movie|film|cinema/.test(l)) return '🎬 ';
+  if (/music|jazz|song|band/.test(l)) return '🎵 ';
+  if (/food|vegetarian|pizza|sushi/.test(l)) return '🥗 ';
+  if (/book|novel/.test(l)) return '📚 ';
+  return '';
+}
+
+function drawGraph(g, animateNew) {
+  const oldIds = new Set(nodes.getIds());
+  const newIds = [];
+  (g.nodes || []).forEach(n => {
+    const isNew = !oldIds.has(n.id);
+    if (isNew) newIds.push(n.id);
+    const degree = (g.edges || []).filter(e =>
+      ('u:' + e.from === n.id || 'i:' + e.from === n.id ||
+       e.from === n.id || e.to === n.id)).length;
+    nodes.update({
+      id: n.id,
+      label: n.kind === 'user' ? '👤 ' + n.label : iconFor(n.item_type, n.label) + n.label,
+      size: n.kind === 'user' ? 30 : Math.min(34, 20 + degree * 3),
+      color: { background: n.kind === 'user' ? '#4f7cff' : '#1f8f5f',
+               border: n.kind === 'user' ? '#9db8ff' : '#7ee2a8' },
+      title: (n.item_type || n.kind),
+    });
+  });
+  const oldE = new Set(edges.getIds());
+  (g.edges || []).forEach((e, i) => {
+    const id = 'e' + i;
+    edges.update({
+      id, from: e.from, to: e.to, label: e.label,
+      dashes: e.active ? false : [6, 6],
+      color: { color: e.active ? (REL_COLOR[e.label] || '#3d4a75') : '#4a546e',
+               highlight: '#fff' },
+      width: e.active ? 2.5 : 1.2,
+      font: { color: e.active ? '#c6cde4' : '#5f6b8f' },
+    });
+    oldE.delete(id);
+  });
+  oldE.forEach(id => edges.remove(id));
+  // drop nodes that vanished
+  const want = new Set((g.nodes || []).map(n => n.id));
+  nodes.getIds().forEach(id => { if (!want.has(id)) nodes.remove(id); });
+
+  const ec = (g.edges || []).filter(e => e.active).length;
+  document.getElementById('graph-count').textContent =
+    `${g.nodes.length} nodes · ${ec} active edges`;
+  try { network.fit({ animation: { duration: 400 } }); } catch (e) {}
+  if (animateNew && newIds.length) {
+    // pulse new nodes
+    newIds.forEach((id, k) => setTimeout(() => {
+      try { network.selectNodes([id]); setTimeout(() => network.unselectAll(), 700); } catch (e) {}
+    }, k * 250));
+  }
+  renderTimeline(g);
+}
+async function refreshGraph(animate) {
+  const r = await fetch('/api/graph?user=' + encodeURIComponent(currentUser));
+  drawGraph(await r.json(), animate);
+}
+network.on('click', async (p) => {
+  const box = document.getElementById('explain-box');
+  if (!p.nodes.length) { box.style.display = 'none'; return; }
+  const n = nodes.get(p.nodes[0]);
+  if (!n.id.startsWith('i:')) { box.style.display = 'none'; return; }
+  const item = n.id.slice(2);
+  const r = await fetch('/api/explain?item=' + encodeURIComponent(item) +
+                        '&user=' + encodeURIComponent(currentUser));
+  const d = await r.json();
+  document.getElementById('explain-title').textContent = 'Why: ' + item;
+  document.getElementById('explain-body').innerHTML =
+    (d.paths || []).map(x =>
+      `<div style="margin:6px 0"><code>${x.relation}</code> · session <b>${x.session}</b><br>` +
+      `<span style="color:var(--dim)">${x.since || ''}${x.active === false ? ' · <b>superseded</b>' : ''}</span></div>`).join('')
+    || '<span style="color:var(--dim)">no path found</span>';
+  box.style.display = 'block';
+});
+
+/* ---------------- timeline ---------------- */
+function renderTimeline(g) {
+  const el = document.getElementById('timeline-items');
+  fetch('/api/timeline?user=' + encodeURIComponent(currentUser)).then(r => r.json()).then(d => {
+    el.innerHTML = (d.items || []).map(t =>
+      `<div class="tl-item${t.active ? '' : ' inactive'}">` +
+      `<span class="tl-time">${(t.since || '').slice(0, 16).replace('T', ' ')}</span>` +
+      `<span class="tl-rel ${t.relation}">${t.relation}</span>` +
+      `<span>${t.item} <span style="color:var(--dim)">· ${t.session || ''}${t.active ? '' : ' · superseded'}</span></span>` +
+      `</div>`).join('') || '<div style="color:var(--dim)">no memories yet</div>';
+  }).catch(() => {});
+}
+document.getElementById('btn-timeline').onclick = () => {
+  const t = document.getElementById('timeline');
+  t.classList.toggle('open');
+  if (t.classList.contains('open')) renderTimeline();
+};
+
+/* ---------------- chat ---------------- */
+const messagesEl = document.getElementById('messages');
+const inputEl = document.getElementById('input');
+function esc(s) { return String(s).replace(/</g, '&lt;'); }
+function colorTrace(lines) {
+  return lines.map(l => {
+    if (l.includes('[tool:remember]')) return `<span class="t-remember">${esc(l)}</span>`;
+    if (l.includes('[tool:recall]')) return `<span class="t-recall">${esc(l)}</span>`;
+    return esc(l);
+  }).join('\n');
+}
+function addMsg(who, text, trace, isTyping) {
+  const div = document.createElement('div');
+  const isSystem = who === 'system';
+  div.className = 'msg ' + (who === 'you' ? 'user' : 'agent');
+  div.innerHTML = `<div class="who">${who === 'you' ? 'you' : esc(who)}</div>` +
+    (isTyping
+      ? `<div class="typing"><span></span><span></span><span></span></div>`
+      : `<div class="body">${isSystem ? text : esc(text)}</div>` +
+        (trace && trace.length ? `<div class="trace">${colorTrace(trace)}</div>` : ''));
+  messagesEl.appendChild(div);
+  messagesEl.scrollTop = messagesEl.scrollHeight;
+  return div;
+}
+async function send(textOverride) {
+  const text = (textOverride || inputEl.value).trim();
+  if (!text || !LLM_OK) return;
+  inputEl.value = '';
+  addMsg('you', text);
+  const thinking = addMsg(agent, '', null, true);
+  try {
+    const r = await fetch('/api/chat', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ agent, message: text })
+    });
+    const d = await r.json();
+    thinking.remove();
+    if (d.error) { addMsg(agent, 'Error: ' + d.error); return; }
+    const msgDiv = addMsg(agent, d.reply || '(no reply)', d.trace);
+    // handoff visualization: if Advisor called Scout, flash it
+    if (d.trace && d.trace.some(t => t.includes('ask_scout'))) {
+      msgDiv.classList.add('handoff-flash');
+      addMsg('system', '🔄 <b>Handoff:</b> Advisor didn\'t know — asked Scout to learn it first.');
+      // pulse the user node in the graph
+      try {
+        const uid = 'u:' + currentUser;
+        network.selectNodes([uid]);
+        setTimeout(() => network.unselectAll(), 1500);
+      } catch (e) {}
+    }
+    if (d.graph) drawGraph(d.graph, true);
+  } catch (e) {
+    thinking.remove();
+    addMsg(agent, 'Request failed: ' + e);
+  }
+}
+document.getElementById('btn-send').onclick = () => send();
+inputEl.addEventListener('keydown', e => { if (e.key === 'Enter') send(); });
+
+document.getElementById('btn-new-session').onclick = async () => {
+  const r = await fetch('/api/session/new', { method: 'POST' });
+  const d = await r.json();
+  document.getElementById('session-id').textContent = d.session;
+  messagesEl.innerHTML = '';
+  addMsg('advisor', `New session ${d.session} — chat wiped, but the graph still holds ${d.facts_in_graph} facts. Ask me anything.`);
+  drawGraph(d.graph, true);
+};
+document.getElementById('btn-reset').onclick = async () => {
+  if (!confirm('Wipe the whole FalkorDB graph?')) return;
+  const r = await fetch('/api/graph/reset', { method: 'POST' });
+  drawGraph((await r.json()).graph, false);
+  messagesEl.innerHTML = '';
+};
+
+/* ---------------- settings ---------------- */
+document.getElementById('btn-settings').onclick = () =>
+  document.getElementById('settings-panel').classList.toggle('show');
+document.getElementById('set-theme').onchange = (e) => {
+  document.body.classList.toggle('light', e.target.value === 'light');
+  try { localStorage.setItem('memagent-theme', e.target.value); } catch (err) {}
+  applyGraphTheme();
+};
+try {
+  const t = localStorage.getItem('memagent-theme');
+  if (t === 'light') {
+    document.body.classList.add('light');
+    document.getElementById('set-theme').value = 'light';
+    setTimeout(applyGraphTheme, 100);
+  }
+} catch (err) {}
+function bindToggle(id, fn) {
+  const el = document.getElementById(id);
+  el.onclick = () => { el.classList.toggle('on'); fn(el.classList.contains('on')); };
+}
+bindToggle('set-physics', on => {
+  network.setOptions({ physics: { enabled: on } });
+});
+bindToggle('set-labels', on => {
+  edges.forEach(e => {
+    edges.update({ id: e.id, label: on ? e.label || '' : '' });
+    if (!on && !e.label) e.label = undefined;
+  });
+  // store original labels
+  network.redraw();
+});
+// fix: preserve labels when toggling
+document.getElementById('set-labels').onclick = null;
+bindToggle('set-labels', on => {
+  const all = edges.get();
+  all.forEach(e => {
+    if (!e._origLabel && e.label) e._origLabel = e.label;
+    edges.update({ id: e.id, label: on ? (e._origLabel || '') : '' });
+  });
+});
+document.getElementById('btn-fullscreen').onclick = () => {
+  document.getElementById('graph-pane').classList.toggle('fullscreen');
+  setTimeout(() => { try { network.redraw(); network.fit(); } catch (e) {} }, 100);
+};
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') {
+    document.getElementById('graph-pane').classList.remove('fullscreen');
+    document.getElementById('settings-panel').classList.remove('show');
+  }
+});
+document.getElementById('set-seed').onclick = async () => {
+  const b = document.getElementById('set-seed');
+  b.disabled = true; b.textContent = 'Loading…';
+  try {
+    const r = await fetch('/api/seed', { method: 'POST' });
+    const d = await r.json();
+    await loadUsers();
+    addMsg('system', `Demo data loaded: <b>alice</b> (${d.alice} memories) and <b>bob</b> (${d.bob} memories). Switch users 👤 to compare.`);
+    refreshGraph(true);
+  } catch (e) { addMsg('advisor', 'Seed failed: ' + e); }
+  b.disabled = false; b.textContent = 'Load alice + bob';
+};
+
+/* ---------------- proactive insights ---------------- */
+document.getElementById('btn-insight').onclick = async () => {
+  const thinking = addMsg('advisor', '', null, true);
+  try {
+    const r = await fetch('/api/insight', { method: 'POST' });
+    const d = await r.json();
+    thinking.remove();
+    addMsg('advisor', d.insight || d.error || '(no insight)');
+  } catch (e) {
+    thinking.remove();
+    addMsg('advisor', 'Insight failed: ' + e);
+  }
+};
+
+/* ---------------- time travel ---------------- */
+let ttStamps = [];  // sorted ISO timestamps from timeline
+document.getElementById('btn-timetravel').onclick = async () => {
+  const panel = document.getElementById('timetravel');
+  panel.classList.toggle('show');
+  if (!panel.classList.contains('show')) return;
+  const r = await fetch('/api/timeline?user=' + encodeURIComponent(currentUser));
+  const d = await r.json();
+  ttStamps = [...new Set((d.items || []).map(t => t.since).filter(Boolean))].sort();
+  const slider = document.getElementById('tt-slider');
+  slider.max = ttStamps.length;
+  slider.value = ttStamps.length;
+  document.getElementById('tt-date').textContent = 'now';
+};
+document.getElementById('tt-slider').oninput = async (e) => {
+  const v = +e.target.value;
+  if (v >= ttStamps.length) {
+    document.getElementById('tt-date').textContent = 'now';
+    refreshGraph(false);
+    return;
+  }
+  const at = ttStamps[v];
+  document.getElementById('tt-date').textContent = at.slice(0, 16).replace('T', ' ');
+  const r = await fetch('/api/graph?user=' + encodeURIComponent(currentUser) +
+                        '&at=' + encodeURIComponent(at));
+  drawGraph(await r.json(), false);
+};
+document.getElementById('tt-now').onclick = () => {
+  document.getElementById('tt-slider').value = ttStamps.length;
+  document.getElementById('tt-date').textContent = 'now';
+  refreshGraph(false);
+};
+/* ---------------- demo mode ---------------- */
+const DEMO_STEPS = [
+  { text: '<b>Step 1/5</b> — Switch to <b>Scout</b> and teach it something about you.',
+    run: async () => { setAgent('scout'); } },
+  { text: '<b>Step 2/5</b> — Scout learns. Watch nodes grow in the graph →',
+    run: async () => { await sendAs('scout', "I love sci-fi movies, especially space operas"); } },
+  { text: '<b>Step 3/5</b> — More preferences. The graph is the memory.',
+    run: async () => { await sendAs('scout', "I can't stand horror movies. And I'm vegetarian."); } },
+  { text: '<b>Step 4/5</b> — <b>↻ New session</b>: chat wiped — but the graph remembers.',
+    run: async () => { document.getElementById('btn-new-session').click();
+                       await new Promise(r => setTimeout(r, 800)); } },
+  { text: '<b>Step 5/5</b> — Ask <b>Advisor</b> anything. Click a node to see <i>why</i> it believes.',
+    run: async () => { setAgent('advisor');
+                       await sendAs('advisor', "Recommend a movie for tonight"); } },
+];
+let demoIdx = -1, demoRunning = false;
+async function sendAs(ag, text) {
+  const prev = agent; setAgent(ag);
+  await send(text);
+  setAgent(prev);
+}
+function demoShow(i) {
+  document.getElementById('demo-text').innerHTML = DEMO_STEPS[i].text;
+  document.getElementById('demo-bar').classList.add('show');
+}
+document.getElementById('btn-demo').onclick = () => {
+  if (demoRunning) return;
+  demoRunning = true; demoIdx = 0; demoShow(0);
+};
+document.getElementById('demo-next').onclick = async () => {
+  if (demoIdx < 0 || demoIdx >= DEMO_STEPS.length) return;
+  document.getElementById('demo-next').disabled = true;
+  try { await DEMO_STEPS[demoIdx].run(); } catch (e) {}
+  document.getElementById('demo-next').disabled = false;
+  demoIdx++;
+  if (demoIdx >= DEMO_STEPS.length) {
+    document.getElementById('demo-text').innerHTML =
+      '<b>Done!</b> Two agents, zero shared chat history — the graph was the only memory. 🕘 Try the Timeline.';
+    document.getElementById('demo-next').style.display = 'none';
+  } else demoShow(demoIdx);
+};
+document.getElementById('demo-stop').onclick = () => {
+  demoRunning = false; demoIdx = -1;
+  document.getElementById('demo-bar').classList.remove('show');
+  document.getElementById('demo-next').style.display = '';
+};
+
+refreshGraph(false);
+window.addEventListener('resize', () => { try { network.redraw(); network.fit(); } catch (e) {} });
+setTimeout(() => { try { network.redraw(); network.fit(); } catch (e) {} }, 600);
+addMsg('advisor', "Hi! I'm Advisor — I answer from graph memory. Switch to Scout to teach me preferences, or hit ▶ Demo for a guided tour.");
+
+/* ---------------- proactive nudges ---------------- */
+const toast = document.createElement('div');
+toast.id = 'proactive-toast';
+toast.innerHTML = '<div class="pt-head">✨ MEMAGENT NUDGE</div><div class="pt-body"></div>';
+document.body.appendChild(toast);
+let toastTimer = null;
+function showProactiveNudge(text) {
+  // 1. toast notification
+  toast.querySelector('.pt-body').textContent = text;
+  toast.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => toast.classList.remove('show'), 12000);
+  toast.onclick = () => {
+    toast.classList.remove('show');
+    document.getElementById('messages').scrollTop =
+      document.getElementById('messages').scrollHeight;
+  };
+  // 2. insert as an Advisor message in chat
+  // (addMsg escapes HTML via esc(), so pass plain text)
+  addMsg('advisor', '✨ (proactive nudge) ' + text);
+}
+async function pollProactive() {
+  try {
+    const r = await fetch('/api/proactive/pending');
+    const d = await r.json();
+    for (const item of (d.items || [])) {
+      showProactiveNudge(item.text);
+      if (d.graph) drawGraph(d.graph, true);
+    }
+  } catch (e) { /* silent — never break the UI for this */ }
+}
+setInterval(pollProactive, 60000);
+setTimeout(pollProactive, 8000);  // first check shortly after load
+
+/* proactive toggle in settings */
+document.getElementById('set-proactive').onclick = async (e) => {
+  const el = e.currentTarget;
+  el.classList.toggle('on');
+  const enabled = el.classList.contains('on');
+  try {
+    await fetch('/api/proactive/toggle', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({enabled}),
+    });
+  } catch (err) {}
+};
+</script>
+</body>
+</html>
