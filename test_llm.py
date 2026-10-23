@@ -147,6 +147,29 @@ def main():
     except RuntimeError as e:
         check("ollama down: helpful error", "ollama pull" in str(e), str(e))
 
+    # 9. Compatible backend on localhost without a key (llama.cpp & co):
+    #    placeholder key, long timeout, chat works against the stub
+    clean_env(LLM_BACKEND="compatible", LLM_BASE_URL=stub_url, LLM_MODEL="qwen4b")
+    llm = LLM()
+    check("compatible-local: backend", llm.backend == "compatible", llm.backend)
+    check("compatible-local: model", llm.model == "qwen4b", llm.model)
+    check("compatible-local: available without key", llm.available is True)
+    check("compatible-local: placeholder key", llm.api_key == "local", llm.api_key)
+    check("compatible-local: timeout 180", llm.timeout == 180, str(llm.timeout))
+    msg = llm.chat([{"role": "user", "content": "hi"}])
+    check("compatible-local: chat works", msg.get("content") == "hello from stub", str(msg))
+
+    # 10. Compatible on a remote host still requires a key, keeps 60s timeout
+    clean_env(LLM_BACKEND="compatible", LLM_BASE_URL="https://example.com/v1")
+    llm = LLM()
+    check("compatible-remote: available False without key", llm.available is False)
+    check("compatible-remote: timeout 60", llm.timeout == 60, str(llm.timeout))
+
+    # 11. Compatible on localhost WITH a real key keeps that key
+    clean_env(LLM_BACKEND="compatible", LLM_BASE_URL=stub_url, LLM_API_KEY="sk-real")
+    llm = LLM()
+    check("compatible-local: real key kept", llm.api_key == "sk-real", llm.api_key)
+
     stub.shutdown()
     print()
     if FAILURES:

@@ -6,7 +6,9 @@ Backends (choose with the LLM_BACKEND env var, or let it auto-detect):
   openai      OpenAI cloud. Needs an API key. This is the original default
               and its behaviour is unchanged.
   compatible  Any OpenAI-compatible endpoint (OpenRouter, DeepSeek, a
-              company gateway, ...). Set LLM_BASE_URL + LLM_API_KEY.
+              company gateway, a local llama.cpp / LM Studio server, ...).
+              Set LLM_BASE_URL, plus LLM_API_KEY unless the server is a
+              keyless one on localhost.
   ollama      A local Ollama server — free, private, no key needed.
               Defaults to http://localhost:11434/v1 and a tool-capable
               model (qwen2.5:7b). Install from https://ollama.com, then
@@ -82,13 +84,22 @@ class LLM:
         elif backend == "compatible":
             self.base_url = (base_url or OPENAI_BASE_URL).rstrip("/")
             self.model = model or OPENAI_DEFAULT_MODEL
+            # A compatible server on localhost (llama.cpp, LM Studio, a
+            # self-hosted gateway) usually needs no key. Like Ollama, use
+            # a placeholder so `available` and the always-sent
+            # Authorization header behave sensibly.
+            if _is_localhost(self.base_url):
+                self.api_key = self.api_key or "local"
         else:  # openai
             self.backend = "openai"
             self.base_url = (base_url or OPENAI_BASE_URL).rstrip("/")
             self.model = model or OPENAI_DEFAULT_MODEL
 
-        # Local inference can be slow to first token; give it more room.
-        self.timeout = 180 if self.backend == "ollama" else 60
+        # Local inference can be slow to first token (a long prompt on a
+        # small CPU box may need a minute just to evaluate); give any
+        # localhost endpoint the long timeout, not just Ollama.
+        local = self.backend == "ollama" or _is_localhost(self.base_url)
+        self.timeout = 180 if local else 60
         self._reachable: bool | None = None  # cached Ollama probe result
 
     def _detect_backend(self, base_url: str | None) -> str:
