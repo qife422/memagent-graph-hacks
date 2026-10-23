@@ -11,13 +11,18 @@ created it, when). Updates don't delete history — they supersede it,
 so the agent can explain *why* it believes something.
 """
 
+import os
 from datetime import datetime, timezone
 
 from falkordb import FalkorDB
 
 
 class GraphMemory:
-    def __init__(self, host="localhost", port=6379, graph_name="agent_memory"):
+    def __init__(self, host=None, port=None, graph_name="agent_memory"):
+        # Env override so Docker Compose can point at the falkordb service;
+        # the defaults keep local and VPS behaviour unchanged.
+        host = host or os.environ.get("FALKORDB_HOST", "localhost")
+        port = port or int(os.environ.get("FALKORDB_PORT", "6379"))
         self.db = FalkorDB(host=host, port=port)
         self.graph = self.db.select_graph(graph_name)
 

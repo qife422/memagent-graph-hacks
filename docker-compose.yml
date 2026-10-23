@@ -1,0 +1,56 @@
+# MemAgent one-click local stack — no API key needed.
+#
+#   docker compose up --build
+#
+# Then open http://localhost:8000
+#
+# Brings up FalkorDB (graph memory), Ollama (local LLM) with the model
+# pulled automatically, and the MemAgent web app wired to both.
+# First run downloads the model (~5 GB), later runs start in seconds.
+# Stop with Ctrl-C; remove everything with `docker compose down -v`.
+
+services:
+  falkordb:
+    image: falkordb/falkordb:latest
+    ports:
+      - "6379:6379"
+    volumes:
+      - falkordb-data:/data
+
+  ollama:
+    image: ollama/ollama:latest
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama-data:/root/.ollama
+
+  # One-shot job: wait for Ollama, then pull the model once.
+  ollama-pull:
+    image: ollama/ollama:latest
+    environment:
+      OLLAMA_HOST: http://ollama:11434
+      LLM_MODEL: ${LLM_MODEL:-qwen2.5:7b}
+    entrypoint: ["/bin/sh", "-c", "until ollama list >/dev/null 2>&1; do sleep 2; done; ollama pull $$LLM_MODEL"]
+    depends_on:
+      - ollama
+
+  app:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      PORT: "8000"
+      LLM_BACKEND: ollama
+      LLM_BASE_URL: http://ollama:11434/v1
+      LLM_MODEL: ${LLM_MODEL:-qwen2.5:7b}
+      FALKORDB_HOST: falkordb
+      FALKORDB_PORT: "6379"
+    depends_on:
+      falkordb:
+        condition: service_started
+      ollama-pull:
+        condition: service_completed_successfully
+
+volumes:
+  falkordb-data:
+  ollama-data:
